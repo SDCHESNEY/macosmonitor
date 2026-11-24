@@ -1,5 +1,6 @@
 #[cfg(target_os = "macos")]
 mod macos;
+pub mod native;
 pub mod sysinfo_impl;
 
 use std::{time::Duration, time::Instant};
@@ -16,6 +17,7 @@ pub struct Snapshot {
     pub uptime: Option<Duration>,
     pub thread_count: Option<usize>,
     pub processes: Vec<ProcessInfo>,
+    pub disks: Vec<DiskInfo>,
 }
 
 impl Default for Snapshot {
@@ -31,6 +33,7 @@ impl Default for Snapshot {
             uptime: None,
             thread_count: None,
             processes: Vec::new(),
+            disks: Vec::new(),
         }
     }
 }
@@ -93,8 +96,30 @@ pub struct ProcessInfo {
     pub is_system: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct DiskInfo {
+    pub name: String,
+    pub mount_point: String,
+    pub available: u64,
+    pub total: u64,
+}
+
 pub trait SystemCollector: Send {
     fn refresh(&mut self) -> Snapshot;
+}
+
+pub enum Collector {
+    Native(native::NativeCollector),
+    Sysinfo(sysinfo_impl::SysinfoCollector),
+}
+
+impl SystemCollector for Collector {
+    fn refresh(&mut self) -> Snapshot {
+        match self {
+            Self::Native(collector) => collector.refresh(),
+            Self::Sysinfo(collector) => collector.refresh(),
+        }
+    }
 }
 
 #[cfg(test)]

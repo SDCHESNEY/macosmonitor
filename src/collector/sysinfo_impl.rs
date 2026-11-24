@@ -1,7 +1,8 @@
 use std::time::{Duration, Instant};
 
+use super::DiskInfo;
 use sysinfo::ProcessStatus as SysinfoProcessStatus;
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind, Users};
+use sysinfo::{Disks, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind, Users};
 use tracing::warn;
 
 use super::{CoreKind, CoreUsage, MemoryStats, ProcessInfo, Snapshot, SystemCollector};
@@ -9,6 +10,7 @@ use super::{CoreKind, CoreUsage, MemoryStats, ProcessInfo, Snapshot, SystemColle
 pub struct SysinfoCollector {
     system: System,
     users: Users,
+    disks: Disks,
     has_cpu_sample: bool,
 }
 
@@ -17,6 +19,7 @@ impl SysinfoCollector {
         Ok(Self {
             system: System::new()?,
             users: Users::new_with_refreshed_list()?,
+            disks: Disks::new_with_refreshed_list()?,
             has_cpu_sample: false,
         })
     }
@@ -24,6 +27,7 @@ impl SysinfoCollector {
     fn refresh_system(&mut self) {
         self.system.refresh_cpu_usage();
         self.system.refresh_memory();
+        self.disks.refresh(true);
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
@@ -147,6 +151,17 @@ impl SystemCollector for SysinfoCollector {
                 .map(std::collections::HashSet::len)
                 .sum::<usize>(),
         );
+        let disks = self
+            .disks
+            .iter()
+            .take(4)
+            .map(|disk| DiskInfo {
+                name: disk.name().to_string_lossy().into_owned(),
+                mount_point: disk.mount_point().to_string_lossy().into_owned(),
+                available: disk.available_space(),
+                total: disk.total_space(),
+            })
+            .collect();
 
         let snapshot = Snapshot {
             taken_at: Instant::now(),
@@ -168,6 +183,7 @@ impl SystemCollector for SysinfoCollector {
             uptime,
             thread_count,
             processes,
+            disks,
         };
         self.has_cpu_sample = true;
         snapshot

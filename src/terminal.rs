@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -20,7 +21,12 @@ pub struct TerminalSession {
 impl TerminalSession {
     pub fn enter() -> Result<Self> {
         enable_raw_mode().context("enable terminal raw mode")?;
-        if let Err(error) = execute!(io::stdout(), EnterAlternateScreen, crossterm::cursor::Hide) {
+        if let Err(error) = execute!(
+            io::stdout(),
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            crossterm::cursor::Hide
+        ) {
             let _ = restore();
             return Err(error).context("enter alternate screen");
         }
@@ -45,6 +51,7 @@ fn restore() -> io::Result<()> {
     let screen = execute!(
         io::stdout(),
         LeaveAlternateScreen,
+        DisableMouseCapture,
         crossterm::cursor::Show,
         crossterm::style::ResetColor
     );

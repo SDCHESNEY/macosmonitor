@@ -1,4 +1,16 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CollectorKind {
+    Native,
+    Sysinfo,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ThemeKind {
+    Dark,
+    Light,
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -8,12 +20,16 @@ use clap::Parser;
 )]
 pub struct Args {
     /// Time between system samples, in milliseconds (minimum 250).
-    #[arg(
-        long,
-        default_value_t = 1000,
-        value_parser = clap::value_parser!(u64).range(250..)
-    )]
-    pub refresh_ms: u64,
+    #[arg(long, value_parser = clap::value_parser!(u64).range(250..))]
+    pub refresh_ms: Option<u64>,
+
+    /// Collector implementation: native or sysinfo.
+    #[arg(long, value_enum)]
+    pub collector: Option<CollectorKind>,
+
+    /// Terminal theme: dark or light.
+    #[arg(long, value_enum)]
+    pub theme: Option<ThemeKind>,
 
     #[cfg(feature = "test-panic")]
     #[arg(long, hide = true)]
@@ -29,7 +45,7 @@ mod tests {
     fn refresh_interval_defaults_to_one_second() {
         let args = Args::try_parse_from(["rtop"]).expect("default CLI arguments should parse");
 
-        assert_eq!(args.refresh_ms, 1000);
+        assert_eq!(args.refresh_ms, None);
     }
 
     #[test]
@@ -39,7 +55,7 @@ mod tests {
             Args::try_parse_from(["rtop", "--refresh-ms", "500"])
                 .expect("500 ms should parse")
                 .refresh_ms,
-            500
+            Some(500)
         );
     }
 }

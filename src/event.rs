@@ -9,13 +9,14 @@ use std::{
 };
 
 use crossterm::event::{
-    self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+    self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent,
 };
 
 use crate::collector::{Snapshot, SystemCollector};
 
 pub enum Event {
     Key(KeyEvent),
+    Mouse(MouseEvent),
     Resize(u16, u16),
     Tick,
     Snapshot(Box<Snapshot>),
@@ -97,6 +98,11 @@ fn input_loop(sender: Sender<Event>, stop: Arc<AtomicBool>) {
                         break;
                     }
                 }
+                Ok(CrosstermEvent::Mouse(mouse)) => {
+                    if sender.send(Event::Mouse(mouse)).is_err() {
+                        break;
+                    }
+                }
                 Ok(_) => {}
                 Err(error) => {
                     let _ = sender.send(Event::Error(error.to_string()));
@@ -142,6 +148,63 @@ fn sampling_loop<C: SystemCollector>(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct KeyBinding {
+    pub key: &'static str,
+    pub action: &'static str,
+}
+
+pub const KEY_BINDINGS: &[KeyBinding] = &[
+    KeyBinding {
+        key: "↑/↓ or j/k",
+        action: "Navigate processes",
+    },
+    KeyBinding {
+        key: "Enter",
+        action: "Open process detail",
+    },
+    KeyBinding {
+        key: "/",
+        action: "Filter processes",
+    },
+    KeyBinding {
+        key: "p/n/u/c/m",
+        action: "Sort by PID/name/user/CPU/memory",
+    },
+    KeyBinding {
+        key: "r",
+        action: "Reverse sort",
+    },
+    KeyBinding {
+        key: "o",
+        action: "Cycle sort",
+    },
+    KeyBinding {
+        key: "t",
+        action: "Toggle tree view",
+    },
+    KeyBinding {
+        key: "k",
+        action: "Request SIGTERM",
+    },
+    KeyBinding {
+        key: "s",
+        action: "Open signal picker",
+    },
+    KeyBinding {
+        key: "Space",
+        action: "Pause/resume sampling",
+    },
+    KeyBinding {
+        key: "?",
+        action: "Open help",
+    },
+    KeyBinding {
+        key: "q/Esc",
+        action: "Quit or close popup",
+    },
+];
+
 pub fn action_for_key(key: KeyEvent, filter_active: bool) -> crate::app::Action {
     use crate::app::Action;
     use crate::process::sort::SortKey;
@@ -180,6 +243,7 @@ pub fn action_for_key(key: KeyEvent, filter_active: bool) -> crate::app::Action 
         KeyCode::Enter => Action::OpenDetail,
         KeyCode::Char('k') => Action::RequestKill,
         KeyCode::Char('s') => Action::OpenSignalPicker,
+        KeyCode::Char('?') => Action::OpenHelp,
         _ => Action::Noop,
     }
 }
@@ -192,7 +256,7 @@ pub fn action_for_key_with_overlay(
     use crate::app::{Action, OverlayMode};
 
     match overlay {
-        OverlayMode::Detail => match key.code {
+        OverlayMode::Detail | OverlayMode::Help => match key.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => Action::CloseOverlay,
             _ => Action::Noop,
         },
@@ -221,7 +285,16 @@ mod tests {
 
     use crate::{app::Action, process::sort::SortKey};
 
+    use super::KEY_BINDINGS;
     use super::action_for_key;
+
+    #[test]
+    fn help_bindings_include_every_action_row() {
+        assert!(!KEY_BINDINGS.is_empty());
+        assert!(KEY_BINDINGS.iter().any(|binding| binding.key == "?"));
+        assert!(KEY_BINDINGS.iter().any(|binding| binding.key == "k"));
+        assert!(KEY_BINDINGS.iter().any(|binding| binding.key == "s"));
+    }
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
         KeyEvent::new(code, modifiers)

@@ -7,7 +7,7 @@ rtop — system monitor
 ██████ CPU 23.5%        LOAD 1.25 0.75 0.50  UP 1d 01h  PROCESSES 1  THREADS 420
 P0:▄ E0:▂
 MEM 7.0 GiB/16.0 GiB  WIRED 2.0 GiB  COMPRESSED 512.0 MiB
-CACHED 1.0 GiB  SWAP 256.0 MiB/2.0 GiB  PRESSURE Normal
+CACHED 1.0 GiB  SWAP 256.0 MiB/2.0 GiB  PRESSURE Normal  DISK —
 ┌CPU history───────────────────────────┐┌Memory history────────────────────────┐
 │▁ ▂▄▁                                 ││▃▃▃▃▃                                 │
 └──────────────────────────────────────┘└──────────────────────────────────────┘

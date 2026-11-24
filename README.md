@@ -3,14 +3,95 @@
 `rtop` is a terminal system monitor in the spirit of `top`, `htop`, and Activity
 Monitor. It is designed for macOS, with a portable Linux implementation.
 
-> **Status:** Phase 3 is implemented: process control, PID-safe signalling,
-> process details and a parent/child tree view.
+> **Status:** Phase 4 is implemented: native Darwin collection support,
+> configuration, themes, mouse input, help, disk usage and release tooling.
 
 ## Platform support
 
 macOS is the primary target, with Apple Silicon first and Intel macOS also
 supported. Linux is a secondary target and is checked in CI. Windows is not
 targeted.
+
+## Phase 4 features
+
+- macOS defaults to the native collector. Use `--collector sysinfo` to force the
+  cross-platform collector, or `--collector native` to request Darwin/libproc
+  collection explicitly.
+- Disk availability and total capacity are shown in the overview when exposed
+  by `sysinfo`.
+- Mouse selection and scrolling are enabled, and clicking the process-table
+  header selects the corresponding sort key.
+- Press `?` for the in-app key-binding help.
+- `NO_COLOR=1` disables terminal colours. Dark is the default; use
+  `--theme light` or `theme = "light"` in config.
+
+## Usage
+
+### TUI
+
+Launch the interactive terminal monitor:
+
+```sh
+cargo run --release
+# or, after building:
+./target/release/rtop
+```
+
+The TUI displays system and process information and refreshes once per second
+by default. Use the mouse or keyboard to navigate:
+
+| Key or mouse action | Action |
+|---|---|
+| `↑` / `↓` or `j` / `k` | Move the process selection |
+| `Enter` | Open the selected process detail view |
+| `/` | Start filtering; `Enter` applies and `Esc` clears |
+| `p`, `n`, `u`, `c`, `m` | Sort by PID, name, user, CPU, or memory |
+| `r` | Reverse the active sort |
+| `o` | Cycle through sort fields |
+| `t` | Toggle the parent/child tree view |
+| `k` | Request SIGTERM for the selected process |
+| `s` | Open the signal picker |
+| `Space` | Pause or resume sampling |
+| `?` | Open the in-app help |
+| `q`, `Esc`, or `Ctrl-C` | Quit |
+| Left click / scroll wheel | Select a process, sort a table header, or scroll |
+
+Press `Enter` or `y` to confirm a signal request, or `n` or `Esc` to cancel.
+The signal picker supports SIGTERM, SIGKILL, SIGINT, SIGHUP, SIGSTOP, and
+SIGCONT.
+
+### CLI
+
+Pass options before launching the TUI:
+
+```sh
+rtop --refresh-ms 500
+rtop --collector native
+rtop --collector sysinfo
+rtop --theme light
+NO_COLOR=1 rtop
+```
+
+Available options:
+
+| Option | Description | Default |
+|---|---|---|
+| `--refresh-ms <MILLISECONDS>` | Sampling interval; minimum 250 ms | 1000 ms, or `refresh_ms` from config |
+| `--collector <native\|sysinfo>` | Select the data collector | Native on macOS; sysinfo on Linux |
+| `--theme <dark\|light>` | Select the terminal palette | Config value or dark |
+| `--help` | Print CLI usage | |
+| `--version` | Print the rtop version | |
+
+Configuration is read from `~/.config/rtop/config.toml`. CLI options take
+precedence over config, and config takes precedence over built-in defaults.
+Example:
+
+```toml
+refresh_ms = 1000
+default_sort = "cpu"
+theme = "dark"
+visible_columns = ["pid", "name", "user", "cpu", "memory", "status"]
+```
 
 ## Development
 
@@ -23,17 +104,7 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 ```
 
-Run the interactive process list with `cargo run --release`. Sampling defaults
-to one second; set `--refresh-ms` to change it (minimum 250 ms). Use the arrow
-keys or `j`/`k` to navigate; `p`, `n`, `u`, `c`, `m`, and `t` sort by PID, name,
-user, CPU, memory, and status. Press the active sort key again to reverse the
-order. `/` filters by name or command; use `pid:`, `user:`, or `path:` for a
-specific field. `Enter` applies the filter and `Esc` clears it. Press `Space`
-to pause/resume updates, and `q`, `Esc`, or `Ctrl-C` to exit.
-Press `Enter` for the selected process detail view, `k` to request SIGTERM,
-and `s` to choose SIGTERM, SIGKILL, SIGINT, SIGHUP, SIGSTOP or SIGCONT. Signal
-requests require `Enter`/`y` confirmation (or `n`/`Esc` cancellation). Press
-`t` to switch between sorted and parent/child tree views.
+The interactive process list and CLI options are described in [Usage](#usage).
 
 The event loop uses `std::thread` and `std::sync::mpsc`; an async runtime is not
 needed for this blocking workload. The first CPU reading is intentionally shown
@@ -69,6 +140,41 @@ SIGTERM allows a graphical application or service to handle shutdown normally.
 SIGKILL is immediate and cannot be handled. Stopped processes may be resumed
 with SIGCONT. launchd-managed daemons can be restarted automatically after a
 signal, depending on their service configuration.
+
+## macOS native collection
+
+The Darwin collector combines Mach and `libproc` data with the `sysinfo`
+baseline: `proc_listpids`, `proc_pidinfo(PROC_PIDTASKINFO)`, `proc_pidpath`,
+Mach VM statistics, and `sysctl` values supply native process paths, resident/
+virtual memory, thread counts, memory pressure and core information. Per-process
+permission failures are ignored instead of aborting a snapshot.
+
+All unsafe FFI in the native collector is confined to
+[`src/collector/macos/mach.rs`](/Users/shawnchesney/Documents/vscodeprojects/macosmonitor/src/collector/macos/mach.rs),
+with buffer-size and kernel-return safety comments. Miri cannot execute Mach,
+libproc or sysctl FFI, so this is documented rather than claimed as Miri-tested.
+
+## Release and Linux support
+
+Linux remains supported with the `sysinfo` collector and is tested in CI.
+Homebrew distribution should install an Apple-silicon or Intel universal binary;
+for an unsigned downloaded release, macOS Gatekeeper can be cleared with:
+
+```sh
+xattr -dr com.apple.quarantine rtop
+```
+
+This project does not claim signed/notarized release artifacts unless a release
+workflow provides verified Developer-ID signatures and `spctl --assess` results.
+
+## What we learned
+
+Darwin process accounting combines several independent APIs; `sysinfo` is useful
+for portable baselines, while libproc/Mach/sysctl expose macOS-specific details.
+Start-time checks reduce PID reuse races, but signal permissions remain subject
+to ownership and macOS service policy. Terminal rendering is a separate,
+testable state function, and keeping snapshots immutable makes refresh,
+filtering and overlays predictable.
 
 ## License
 

@@ -34,6 +34,8 @@ pub enum Action {
     ConfirmKill,
     CancelKill,
     ToggleTree,
+    SelectVisibleIndex(usize),
+    OpenHelp,
     Quit,
     Noop,
     SnapshotReceived(Box<Snapshot>),
@@ -47,6 +49,7 @@ pub enum OverlayMode {
     KillConfirm,
     ExtraConfirm,
     SignalPicker,
+    Help,
 }
 
 #[derive(Debug)]
@@ -69,6 +72,7 @@ pub struct AppState {
     pub status_message: Option<String>,
     pub tree_view: bool,
     pub tree_depths: Vec<usize>,
+    pub theme: crate::config::Theme,
 }
 
 impl AppState {
@@ -189,6 +193,11 @@ impl AppState {
                 self.rebuild_visible_indices();
                 self.restore_selection(self.selected_pid, self.selected_index);
             }
+            Action::SelectVisibleIndex(index) => {
+                self.selected_index = index.min(self.visible_count().saturating_sub(1));
+                self.selected_pid = self.selected_process().map(|process| process.pid);
+            }
+            Action::OpenHelp => self.overlay = OverlayMode::Help,
         }
         self.selected_pid = self
             .visible_indices
@@ -439,6 +448,7 @@ impl Default for AppState {
             status_message: None,
             tree_view: false,
             tree_depths: Vec::new(),
+            theme: crate::config::Theme::Dark,
         }
     }
 }
@@ -611,6 +621,36 @@ mod tests {
         assert_eq!(state.cpu_history.len(), HISTORY_CAPACITY);
         assert_eq!(state.memory_history.len(), HISTORY_CAPACITY);
         assert_eq!(state.cpu_history.front(), Some(&5));
+    }
+
+    #[test]
+    fn synthetic_five_thousand_process_snapshot_is_indexable() {
+        let mut state = AppState::new();
+        let snapshot = Snapshot {
+            processes: (1..=5_000)
+                .map(|pid| ProcessInfo {
+                    pid,
+                    parent: Some(if pid == 1 { 0 } else { 1 }),
+                    name: format!("process-{pid}"),
+                    command: String::new(),
+                    exe_path: None,
+                    user: Some("user".to_owned()),
+                    uid: Some(1000),
+                    cpu_percent: Some((pid % 100) as f32),
+                    mem_bytes: Some(pid as u64),
+                    virtual_mem_bytes: None,
+                    status: "Sleep".to_owned(),
+                    start_time: pid as u64,
+                    thread_count: Some(1),
+                    is_system: false,
+                })
+                .collect(),
+            ..Snapshot::default()
+        };
+        state.update(Action::SnapshotReceived(Box::new(snapshot)));
+        assert_eq!(state.visible_count(), 5_000);
+        state.update(Action::PageDown);
+        assert!(state.selected_index >= 10);
     }
 
     struct MockProcessController {

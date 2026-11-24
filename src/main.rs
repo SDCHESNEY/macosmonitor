@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod collector;
+mod config;
 mod event;
 mod process;
 mod terminal;
@@ -10,13 +11,14 @@ use std::{fs, io, path::PathBuf, sync::mpsc, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::{Terminal, backend::CrosstermBackend};
 use tracing_appender::non_blocking::WorkerGuard;
 
 use crate::{
     app::{Action, AppState},
     cli::Args,
-    collector::sysinfo_impl::SysinfoCollector,
+    collector::{Collector, native::NativeCollector, sysinfo_impl::SysinfoCollector},
     event::{Event, WorkerSet, action_for_key_with_overlay},
     process::signal::UnixProcessController,
 };
@@ -32,7 +34,42 @@ fn main() -> Result<()> {
 }
 
 fn run(args: Args) -> Result<()> {
-    let collector = SysinfoCollector::new().context("initialize system collector")?;
+    let (config, config_warning) = config::load();
+    if let Some(warning) = config_warning {
+        tracing::warn!("{warning}");
+    }
+    let refresh_ms = config::effective_refresh(args.refresh_ms, &config);
+    let theme = args
+        .theme
+        .map(|theme| match theme {
+            cli::ThemeKind::Dark => config::Theme::Dark,
+            cli::ThemeKind::Light => config::Theme::Light,
+        })
+        .unwrap_or_else(|| match config.theme.to_lowercase().as_str() {
+            "light" => config::Theme::Light,
+            _ => config::Theme::Dark,
+        });
+    #[cfg(target_os = "macos")]
+    let use_native = args
+        .collector
+        .map(|collector| matches!(collector, cli::CollectorKind::Native))
+        .unwrap_or(true);
+    #[cfg(not(target_os = "macos"))]
+    let use_native = args
+        .collector
+        .is_some_and(|collector| matches!(collector, cli::CollectorKind::Native));
+    let collector = if use_native {
+        #[cfg(target_os = "macos")]
+        {
+            Collector::Native(NativeCollector::new().context("initialize native collector")?)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Collector::Sysinfo(SysinfoCollector::new().context("initialize system collector")?)
+        }
+    } else {
+        Collector::Sysinfo(SysinfoCollector::new().context("initialize system collector")?)
+    };
     let _terminal_session = terminal::TerminalSession::enter()?;
 
     #[cfg(feature = "test-panic")]
@@ -43,8 +80,9 @@ fn run(args: Args) -> Result<()> {
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))
         .context("initialize terminal renderer")?;
     let (sender, receiver) = mpsc::channel();
-    let _workers = WorkerSet::start(sender, collector, Duration::from_millis(args.refresh_ms));
+    let _workers = WorkerSet::start(sender, collector, Duration::from_millis(refresh_ms));
     let mut state = AppState::new();
+    state.theme = theme;
     let process_controller = UnixProcessController::new();
 
     while state.running {
@@ -60,6 +98,32 @@ fn run(args: Args) -> Result<()> {
                     state.confirm_kill(&process_controller);
                 }
             }
+            Event::Mouse(mouse) => match mouse.kind {
+                MouseEventKind::ScrollUp => state.update(Action::MoveUp),
+                MouseEventKind::ScrollDown => state.update(Action::MoveDown),
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if mouse.row >= 9 {
+                        let index = (mouse.row.saturating_sub(9)) as usize;
+                        state.update(Action::SelectVisibleIndex(index));
+                    } else if mouse.row == 8 {
+                        let key = if mouse.column < 8 {
+                            process::sort::SortKey::Pid
+                        } else if mouse.column < 40 {
+                            process::sort::SortKey::Name
+                        } else if mouse.column < 55 {
+                            process::sort::SortKey::User
+                        } else if mouse.column < 65 {
+                            process::sort::SortKey::Cpu
+                        } else if mouse.column < 85 {
+                            process::sort::SortKey::Memory
+                        } else {
+                            process::sort::SortKey::Status
+                        };
+                        state.update(Action::SortBy(key));
+                    }
+                }
+                _ => {}
+            },
             Event::Resize(width, height) => {
                 tracing::debug!(width, height, "terminal resized");
             }

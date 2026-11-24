@@ -18,13 +18,25 @@ use crate::{
 pub enum Palette {
     TrueColor,
     Ansi256,
+    NoColor,
+    LightTrueColor,
+    LightAnsi256,
 }
 
 impl Palette {
-    pub fn from_environment() -> Self {
+    pub fn from_environment(theme: crate::config::Theme) -> Self {
+        if std::env::var_os("NO_COLOR").is_some() {
+            return Self::NoColor;
+        }
         match std::env::var("COLORTERM").ok().as_deref() {
-            Some("truecolor" | "24bit") => Self::TrueColor,
-            _ => Self::Ansi256,
+            Some("truecolor" | "24bit") => match theme {
+                crate::config::Theme::Dark => Self::TrueColor,
+                crate::config::Theme::Light => Self::LightTrueColor,
+            },
+            _ => match theme {
+                crate::config::Theme::Dark => Self::Ansi256,
+                crate::config::Theme::Light => Self::LightAnsi256,
+            },
         }
     }
 
@@ -32,6 +44,9 @@ impl Palette {
         match self {
             Self::TrueColor => Color::Rgb(86, 182, 194),
             Self::Ansi256 => Color::Indexed(44),
+            Self::NoColor => Color::Reset,
+            Self::LightTrueColor => Color::Rgb(20, 96, 140),
+            Self::LightAnsi256 => Color::Indexed(24),
         }
     }
 
@@ -39,6 +54,9 @@ impl Palette {
         match self {
             Self::TrueColor => Color::Rgb(150, 160, 170),
             Self::Ansi256 => Color::Indexed(245),
+            Self::NoColor => Color::Reset,
+            Self::LightTrueColor => Color::Rgb(90, 100, 110),
+            Self::LightAnsi256 => Color::Indexed(242),
         }
     }
 
@@ -46,6 +64,9 @@ impl Palette {
         match self {
             Self::TrueColor => Color::Rgb(97, 175, 239),
             Self::Ansi256 => Color::Indexed(75),
+            Self::NoColor => Color::Reset,
+            Self::LightTrueColor => Color::Rgb(30, 100, 180),
+            Self::LightAnsi256 => Color::Indexed(25),
         }
     }
 
@@ -53,12 +74,15 @@ impl Palette {
         match self {
             Self::TrueColor => Color::Rgb(198, 120, 221),
             Self::Ansi256 => Color::Indexed(176),
+            Self::NoColor => Color::Reset,
+            Self::LightTrueColor => Color::Rgb(130, 50, 140),
+            Self::LightAnsi256 => Color::Indexed(132),
         }
     }
 }
 
 pub fn draw(frame: &mut Frame<'_>, state: &AppState) {
-    draw_with_palette(frame, state, Palette::from_environment());
+    draw_with_palette(frame, state, Palette::from_environment(state.theme));
 }
 
 pub fn draw_with_palette(frame: &mut Frame<'_>, state: &AppState, palette: Palette) {
@@ -201,11 +225,21 @@ fn draw_memory_summary(
                     optional_bytes(snapshot.memory.compressed)
                 )),
                 Line::from(format!(
-                    "CACHED {}  SWAP {}/{}  PRESSURE {}",
+                    "CACHED {}  SWAP {}/{}  PRESSURE {}  DISK {}",
                     optional_bytes(snapshot.memory.cached),
                     format_bytes(snapshot.swap_used),
                     format_bytes(snapshot.swap_total),
-                    format_pressure(snapshot.memory.pressure)
+                    format_pressure(snapshot.memory.pressure),
+                    snapshot.disks.first().map_or_else(
+                        || "—".to_owned(),
+                        |disk| format!(
+                            "{} {} {}/{}",
+                            disk.name,
+                            disk.mount_point,
+                            format_bytes(disk.available),
+                            format_bytes(disk.total)
+                        )
+                    )
                 )),
             ]
         },
@@ -493,6 +527,7 @@ fn draw_overlay(
     let popup_width = area.width.saturating_sub(12).clamp(40, 90);
     let popup_height = match state.overlay {
         OverlayMode::Detail => 12,
+        OverlayMode::Help => 16,
         OverlayMode::SignalPicker => 10,
         _ => 9,
     };
@@ -505,6 +540,21 @@ fn draw_overlay(
 
     match state.overlay {
         OverlayMode::None => {}
+        OverlayMode::Help => {
+            let mut lines = vec![Line::from("Key bindings")];
+            for binding in crate::event::KEY_BINDINGS {
+                lines.push(Line::from(format!(
+                    "{:<18} {}",
+                    binding.key, binding.action
+                )));
+            }
+            lines.push(Line::from("Esc closes"));
+            frame.render_widget(Clear, popup);
+            frame.render_widget(
+                Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Help")),
+                popup,
+            );
+        }
         OverlayMode::Detail => {
             let Some(process) = state.selected_process() else {
                 return;

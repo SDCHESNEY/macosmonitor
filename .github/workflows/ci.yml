@@ -33,3 +33,5 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Run tests
         run: cargo test --locked
+      - name: Check documentation
+        run: cargo doc --locked --no-deps
