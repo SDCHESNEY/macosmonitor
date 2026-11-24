@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+mod macos;
 pub mod sysinfo_impl;
 
 use std::{time::Duration, time::Instant};
@@ -6,11 +8,13 @@ use std::{time::Duration, time::Instant};
 pub struct Snapshot {
     pub taken_at: Instant,
     pub cpu_total: Option<f32>,
+    pub cpu_per_core: Vec<CoreUsage>,
     pub memory: MemoryStats,
     pub swap_used: u64,
     pub swap_total: u64,
     pub load_avg: Option<(f64, f64, f64)>,
     pub uptime: Option<Duration>,
+    pub thread_count: Option<usize>,
     pub processes: Vec<ProcessInfo>,
 }
 
@@ -19,26 +23,64 @@ impl Default for Snapshot {
         Self {
             taken_at: Instant::now(),
             cpu_total: None,
+            cpu_per_core: Vec::new(),
             memory: MemoryStats::default(),
             swap_used: 0,
             swap_total: 0,
             load_avg: None,
             uptime: None,
+            thread_count: None,
             processes: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoreKind {
+    Performance,
+    Efficiency,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CoreUsage {
+    pub index: usize,
+    pub kind: CoreKind,
+    pub usage_percent: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct MemoryStats {
     pub total: u64,
     pub used: u64,
+    pub wired: Option<u64>,
+    pub compressed: Option<u64>,
+    pub cached: Option<u64>,
+    pub pressure: Option<MemoryPressure>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MemoryDetails {
+    pub used: Option<u64>,
+    pub wired: Option<u64>,
+    pub compressed: Option<u64>,
+    pub cached: Option<u64>,
+    pub pressure: Option<MemoryPressure>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryPressure {
+    Normal,
+    Warning,
+    Critical,
 }
 
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
     pub pid: u32,
     pub name: String,
+    pub command: String,
+    pub exe_path: Option<std::path::PathBuf>,
     pub user: Option<String>,
     pub cpu_percent: Option<f32>,
     pub mem_bytes: Option<u64>,

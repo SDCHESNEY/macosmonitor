@@ -2,6 +2,7 @@ mod app;
 mod cli;
 mod collector;
 mod event;
+mod process;
 mod terminal;
 mod ui;
 
@@ -49,7 +50,7 @@ fn run(args: Args) -> Result<()> {
             .recv()
             .context("event workers stopped unexpectedly")?;
         match event {
-            Event::Key(key) => state.update(action_for_key(key)),
+            Event::Key(key) => state.update(action_for_key(key, state.filter_active)),
             Event::Resize(width, height) => {
                 tracing::debug!(width, height, "terminal resized");
             }

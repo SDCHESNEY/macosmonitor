@@ -4,7 +4,7 @@ use sysinfo::ProcessStatus as SysinfoProcessStatus;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind, Users};
 use tracing::warn;
 
-use super::{MemoryStats, ProcessInfo, Snapshot, SystemCollector};
+use super::{CoreKind, CoreUsage, MemoryStats, ProcessInfo, Snapshot, SystemCollector};
 
 pub struct SysinfoCollector {
     system: System,
@@ -30,6 +30,9 @@ impl SysinfoCollector {
             ProcessRefreshKind::nothing()
                 .with_cpu()
                 .with_memory()
+                .with_cmd(UpdateKind::OnlyIfNotSet)
+                .with_exe(UpdateKind::OnlyIfNotSet)
+                .with_tasks()
                 .with_user(UpdateKind::OnlyIfNotSet),
         );
     }
@@ -49,6 +52,13 @@ impl SystemCollector for SysinfoCollector {
                 ProcessInfo {
                     pid: pid.as_u32(),
                     name: process.name().to_string_lossy().into_owned(),
+                    command: process
+                        .cmd()
+                        .iter()
+                        .map(|part| part.to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    exe_path: process.exe().map(std::path::Path::to_path_buf),
                     user: process
                         .user_id()
                         .and_then(|uid| self.users.get_user_by_id(uid))
@@ -80,17 +90,67 @@ impl SystemCollector for SysinfoCollector {
             }
         };
 
+        #[cfg(target_os = "macos")]
+        let core_counts =
+            super::macos::performance_core_count().zip(super::macos::efficiency_core_count());
+        let cpu_per_core = self
+            .system
+            .cpus()
+            .iter()
+            .enumerate()
+            .map(|(index, cpu)| {
+                #[cfg(target_os = "macos")]
+                let kind = match core_counts {
+                    Some((performance, _)) if index < performance => CoreKind::Performance,
+                    Some((performance, efficiency)) if index < performance + efficiency => {
+                        CoreKind::Efficiency
+                    }
+                    _ => CoreKind::Unknown,
+                };
+                #[cfg(not(target_os = "macos"))]
+                let kind = CoreKind::Unknown;
+                CoreUsage {
+                    index,
+                    kind,
+                    usage_percent: self.has_cpu_sample.then(|| cpu.usage()),
+                }
+            })
+            .collect();
+        #[cfg(target_os = "macos")]
+        let memory_details = super::macos::memory_details();
+        #[cfg(not(target_os = "macos"))]
+        let memory_details = super::MemoryDetails::default();
+        #[cfg(target_os = "macos")]
+        let thread_count = super::macos::thread_count();
+        #[cfg(not(target_os = "macos"))]
+        let thread_count = Some(
+            self.system
+                .processes()
+                .values()
+                .filter_map(|process| process.tasks())
+                .map(std::collections::HashSet::len)
+                .sum::<usize>(),
+        );
+
         let snapshot = Snapshot {
             taken_at: Instant::now(),
             cpu_total,
+            cpu_per_core,
             memory: MemoryStats {
                 total: self.system.total_memory(),
-                used: self.system.used_memory(),
+                used: memory_details
+                    .used
+                    .unwrap_or_else(|| self.system.used_memory()),
+                wired: memory_details.wired,
+                compressed: memory_details.compressed,
+                cached: memory_details.cached,
+                pressure: memory_details.pressure,
             },
             swap_used: self.system.used_swap(),
             swap_total: self.system.total_swap(),
             load_avg,
             uptime,
+            thread_count,
             processes,
         };
         self.has_cpu_sample = true;

@@ -142,11 +142,23 @@ fn sampling_loop<C: SystemCollector>(
     }
 }
 
-pub fn action_for_key(key: KeyEvent) -> crate::app::Action {
+pub fn action_for_key(key: KeyEvent, filter_active: bool) -> crate::app::Action {
     use crate::app::Action;
+    use crate::process::sort::SortKey;
 
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return Action::Quit;
+    }
+    if filter_active {
+        return match key.code {
+            KeyCode::Esc => Action::FilterCancel,
+            KeyCode::Enter => Action::FilterCommit,
+            KeyCode::Backspace => Action::FilterBackspace,
+            KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Action::FilterInput(character)
+            }
+            _ => Action::Noop,
+        };
     }
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => Action::Quit,
@@ -154,6 +166,57 @@ pub fn action_for_key(key: KeyEvent) -> crate::app::Action {
         KeyCode::Down | KeyCode::Char('j') => Action::MoveDown,
         KeyCode::PageUp => Action::PageUp,
         KeyCode::PageDown => Action::PageDown,
+        KeyCode::Char('/') => Action::EnterFilter,
+        KeyCode::Char(' ') => Action::TogglePause,
+        KeyCode::Char('p') => Action::SortBy(SortKey::Pid),
+        KeyCode::Char('n') => Action::SortBy(SortKey::Name),
+        KeyCode::Char('u') => Action::SortBy(SortKey::User),
+        KeyCode::Char('c') => Action::SortBy(SortKey::Cpu),
+        KeyCode::Char('m') => Action::SortBy(SortKey::Memory),
+        KeyCode::Char('t') => Action::SortBy(SortKey::Status),
+        KeyCode::Char('r') => Action::ToggleSortOrder,
+        KeyCode::Char('o') => Action::CycleSort,
         _ => Action::Noop,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::{app::Action, process::sort::SortKey};
+
+    use super::action_for_key;
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    #[test]
+    fn phase_two_key_bindings_cover_filter_sort_pause_and_quit() {
+        assert!(matches!(
+            action_for_key(key(KeyCode::Char('/'), KeyModifiers::NONE), false),
+            Action::EnterFilter
+        ));
+        assert!(matches!(
+            action_for_key(key(KeyCode::Char('q'), KeyModifiers::NONE), true),
+            Action::FilterInput('q')
+        ));
+        assert!(matches!(
+            action_for_key(key(KeyCode::Esc, KeyModifiers::NONE), true),
+            Action::FilterCancel
+        ));
+        assert!(matches!(
+            action_for_key(key(KeyCode::Char('m'), KeyModifiers::NONE), false),
+            Action::SortBy(SortKey::Memory)
+        ));
+        assert!(matches!(
+            action_for_key(key(KeyCode::Char(' '), KeyModifiers::NONE), false),
+            Action::TogglePause
+        ));
+        assert!(matches!(
+            action_for_key(key(KeyCode::Esc, KeyModifiers::NONE), false),
+            Action::Quit
+        ));
     }
 }

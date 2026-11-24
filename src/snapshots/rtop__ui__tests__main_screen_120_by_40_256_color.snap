@@ -1,0 +1,45 @@
+---
+source: src/ui.rs
+expression: "render_snapshot(120, 40, Palette::Ansi256)"
+---
+title color: Indexed(44)
+rtop — system monitor
+██████ CPU 23.5%        LOAD 1.25 0.75 0.50  UP 1d 01h  PROCESSES 1  THREADS 420  AGE 0.0s
+P0:▄ E0:▂
+MEM 7.0 GiB/16.0 GiB  WIRED 2.0 GiB  COMPRESSED 512.0 MiB
+CACHED 1.0 GiB  SWAP 256.0 MiB/2.0 GiB  PRESSURE Normal
+┌CPU history───────────────────────────────────────────────┐┌Memory history────────────────────────────────────────────┐
+│▁ ▂▄▁                                                     ││▃▃▃▃▃                                                     │
+└──────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
+┌Processes─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  PID     Name                    User           CPU ▼     Memory         Status         Command                      │
+│› 123     sample-process          user           4.5       128.0 MiB      Sleep          /usr/bin/sample-p...         │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+p/n/u/c/m/t sort • / filter • Space pause • ↑/↓ navigate • q quit  PID 123 sample-process
