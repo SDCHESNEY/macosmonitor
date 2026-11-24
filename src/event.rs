@@ -149,6 +149,7 @@ pub fn action_for_key(key: KeyEvent, filter_active: bool) -> crate::app::Action 
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return Action::Quit;
     }
+
     if filter_active {
         return match key.code {
             KeyCode::Esc => Action::FilterCancel,
@@ -162,7 +163,7 @@ pub fn action_for_key(key: KeyEvent, filter_active: bool) -> crate::app::Action 
     }
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => Action::Quit,
-        KeyCode::Up | KeyCode::Char('k') => Action::MoveUp,
+        KeyCode::Up => Action::MoveUp,
         KeyCode::Down | KeyCode::Char('j') => Action::MoveDown,
         KeyCode::PageUp => Action::PageUp,
         KeyCode::PageDown => Action::PageDown,
@@ -173,10 +174,44 @@ pub fn action_for_key(key: KeyEvent, filter_active: bool) -> crate::app::Action 
         KeyCode::Char('u') => Action::SortBy(SortKey::User),
         KeyCode::Char('c') => Action::SortBy(SortKey::Cpu),
         KeyCode::Char('m') => Action::SortBy(SortKey::Memory),
-        KeyCode::Char('t') => Action::SortBy(SortKey::Status),
+        KeyCode::Char('t') => Action::ToggleTree,
         KeyCode::Char('r') => Action::ToggleSortOrder,
         KeyCode::Char('o') => Action::CycleSort,
+        KeyCode::Enter => Action::OpenDetail,
+        KeyCode::Char('k') => Action::RequestKill,
+        KeyCode::Char('s') => Action::OpenSignalPicker,
         _ => Action::Noop,
+    }
+}
+
+pub fn action_for_key_with_overlay(
+    key: KeyEvent,
+    filter_active: bool,
+    overlay: crate::app::OverlayMode,
+) -> crate::app::Action {
+    use crate::app::{Action, OverlayMode};
+
+    match overlay {
+        OverlayMode::Detail => match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => Action::CloseOverlay,
+            _ => Action::Noop,
+        },
+        OverlayMode::KillConfirm | OverlayMode::ExtraConfirm => match key.code {
+            KeyCode::Enter | KeyCode::Char('y') => Action::ConfirmKill,
+            KeyCode::Esc | KeyCode::Char('n') => Action::CancelKill,
+            _ => Action::Noop,
+        },
+        OverlayMode::SignalPicker => match key.code {
+            KeyCode::Esc | KeyCode::Char('n') => Action::CancelKill,
+            KeyCode::Char('1') => Action::SelectSignal(crate::process::signal::Signal::Term),
+            KeyCode::Char('2') => Action::SelectSignal(crate::process::signal::Signal::Kill),
+            KeyCode::Char('3') => Action::SelectSignal(crate::process::signal::Signal::Int),
+            KeyCode::Char('4') => Action::SelectSignal(crate::process::signal::Signal::Hup),
+            KeyCode::Char('5') => Action::SelectSignal(crate::process::signal::Signal::Stop),
+            KeyCode::Char('6') => Action::SelectSignal(crate::process::signal::Signal::Cont),
+            _ => Action::Noop,
+        },
+        OverlayMode::None => action_for_key(key, filter_active),
     }
 }
 

@@ -41,15 +41,21 @@ mod tests {
     fn process() -> ProcessInfo {
         ProcessInfo {
             pid: 42,
+            parent: Some(1),
             name: "Editor".to_owned(),
             command: "editor --workspace /Users/demo/Code".to_owned(),
             exe_path: Some(PathBuf::from(
                 "/Applications/Editor.app/Contents/MacOS/editor",
             )),
             user: Some("Alice".to_owned()),
+            uid: Some(501),
             cpu_percent: None,
             mem_bytes: None,
+            virtual_mem_bytes: None,
             status: "Sleep".to_owned(),
+            start_time: 100,
+            thread_count: Some(4),
+            is_system: false,
         }
     }
 

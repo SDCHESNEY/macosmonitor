@@ -78,13 +78,19 @@ pub enum MemoryPressure {
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
     pub pid: u32,
+    pub parent: Option<u32>,
     pub name: String,
     pub command: String,
     pub exe_path: Option<std::path::PathBuf>,
     pub user: Option<String>,
+    pub uid: Option<u32>,
     pub cpu_percent: Option<f32>,
     pub mem_bytes: Option<u64>,
+    pub virtual_mem_bytes: Option<u64>,
     pub status: String,
+    pub start_time: u64,
+    pub thread_count: Option<usize>,
+    pub is_system: bool,
 }
 
 pub trait SystemCollector: Send {

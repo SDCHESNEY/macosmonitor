@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table, TableState},
+    widgets::{Block, Borders, Cell, Clear, Gauge, Paragraph, Row, Sparkline, Table, TableState},
 };
 
 use crate::{
@@ -86,6 +86,7 @@ pub fn draw_with_palette(frame: &mut Frame<'_>, state: &AppState, palette: Palet
     draw_history(frame, state, sections[4], palette);
     draw_processes(frame, state, sections[5], palette);
     draw_footer(frame, state, sections[6], palette);
+    draw_overlay(frame, state, area, palette);
 }
 
 fn draw_cpu_summary(
@@ -273,13 +274,15 @@ fn draw_processes(
     let rows = state
         .visible_indices
         .iter()
-        .filter_map(|index| {
-            state
+        .enumerate()
+        .filter_map(|(row_index, index)| {
+            let process = state
                 .snapshot
                 .as_ref()
-                .and_then(|snapshot| snapshot.processes.get(*index))
+                .and_then(|snapshot| snapshot.processes.get(*index))?;
+            let depth = state.tree_depths.get(row_index).copied().unwrap_or(0);
+            Some(process_row(process, compact, wide, area.width, depth))
         })
-        .map(|process| process_row(process, compact, wide, area.width))
         .collect::<Vec<_>>();
     let constraints = table_constraints(compact, wide);
     let header = Row::new(headers).style(
@@ -360,7 +363,13 @@ fn table_constraints(compact: bool, wide: bool) -> Vec<Constraint> {
     }
 }
 
-fn process_row(process: &ProcessInfo, compact: bool, wide: bool, width: u16) -> Row<'static> {
+fn process_row(
+    process: &ProcessInfo,
+    compact: bool,
+    wide: bool,
+    width: u16,
+    depth: usize,
+) -> Row<'static> {
     let cpu = process
         .cpu_percent
         .map_or_else(|| "—".to_owned(), |usage| format!("{usage:.1}"));
@@ -369,7 +378,10 @@ fn process_row(process: &ProcessInfo, compact: bool, wide: bool, width: u16) -> 
         .map_or_else(|| "—".to_owned(), format_bytes);
     let mut cells = vec![
         Cell::from(process.pid.to_string()),
-        Cell::from(truncate(&process.name, if compact { 22 } else { 24 })),
+        Cell::from(truncate(
+            &format!("{}{}", "  ".repeat(depth), process.name),
+            if compact { 22 } else { 24 },
+        )),
     ];
     if wide {
         cells.push(Cell::from(
@@ -405,13 +417,19 @@ fn draw_footer(
     let mut hints = if state.filter_active {
         format!("FILTER: {}▏  Enter apply • Esc clear", state.filter_query)
     } else {
-        "p/n/u/c/m/t sort • / filter • Space pause • ↑/↓ navigate • q quit".to_owned()
+        "p/n/u/c/m/r sort • / filter • Enter detail • k kill • s signal • t tree • Space pause • q quit".to_owned()
     };
     if !state.filter_active && !state.filter_query.is_empty() {
         hints.push_str(&format!("  FILTER: {}", state.filter_query));
     }
     if state.paused {
         hints.push_str("  PAUSED");
+    }
+    if state.tree_view {
+        hints.push_str("  TREE");
+    }
+    if let Some(status) = &state.status_message {
+        hints.push_str(&format!("  {status}"));
     }
     if let Some(process) = state.selected_process() {
         hints.push_str(&format!(
@@ -461,6 +479,160 @@ fn format_uptime(uptime: Duration) -> String {
         format!("{days}d {hours:02}h")
     } else {
         format!("{hours}h {minutes:02}m")
+    }
+}
+
+fn draw_overlay(
+    frame: &mut Frame<'_>,
+    state: &AppState,
+    area: ratatui::layout::Rect,
+    palette: Palette,
+) {
+    use crate::app::OverlayMode;
+
+    let popup_width = area.width.saturating_sub(12).clamp(40, 90);
+    let popup_height = match state.overlay {
+        OverlayMode::Detail => 12,
+        OverlayMode::SignalPicker => 10,
+        _ => 9,
+    };
+    let popup = ratatui::layout::Rect {
+        x: area.x + (area.width.saturating_sub(popup_width)) / 2,
+        y: area.y + (area.height.saturating_sub(popup_height)) / 2,
+        width: popup_width,
+        height: popup_height,
+    };
+
+    match state.overlay {
+        OverlayMode::None => {}
+        OverlayMode::Detail => {
+            let Some(process) = state.selected_process() else {
+                return;
+            };
+            let children = state
+                .snapshot
+                .as_ref()
+                .map(|snapshot| {
+                    snapshot
+                        .processes
+                        .iter()
+                        .filter(|child| child.parent == Some(process.pid))
+                        .map(|child| child.pid.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .filter(|children| !children.is_empty())
+                .unwrap_or_else(|| "—".to_owned());
+            let start = if process.start_time == 0 {
+                "—".to_owned()
+            } else {
+                process.start_time.to_string()
+            };
+            let text = vec![
+                Line::from(format!("PID: {}", process.pid)),
+                Line::from(format!("Name: {}", process.name)),
+                Line::from(format!("Command: {}", process.command)),
+                Line::from(format!(
+                    "Executable: {}",
+                    process
+                        .exe_path
+                        .as_ref()
+                        .map_or_else(|| "—".to_owned(), |path| path.display().to_string())
+                )),
+                Line::from(format!(
+                    "Parent PID: {}",
+                    process
+                        .parent
+                        .map_or_else(|| "—".to_owned(), |pid| pid.to_string())
+                )),
+                Line::from(format!("User: {}", process.user.as_deref().unwrap_or("—"))),
+                Line::from(format!("Start time: {start}")),
+                Line::from(format!(
+                    "Threads: {}",
+                    process
+                        .thread_count
+                        .map_or_else(|| "—".to_owned(), |count| count.to_string())
+                )),
+                Line::from(format!(
+                    "Resident: {}  Virtual: {}",
+                    process
+                        .mem_bytes
+                        .map_or_else(|| "—".to_owned(), format_bytes),
+                    process
+                        .virtual_mem_bytes
+                        .map_or_else(|| "—".to_owned(), format_bytes)
+                )),
+                Line::from(format!("Children: {children}")),
+                Line::from("Esc closes"),
+            ];
+            frame.render_widget(Clear, popup);
+            frame.render_widget(
+                Paragraph::new(text).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Process Detail"),
+                ),
+                popup,
+            );
+        }
+        OverlayMode::KillConfirm | OverlayMode::ExtraConfirm => {
+            let Some(process) = state.selected_process() else {
+                return;
+            };
+            let warning = if state.overlay == OverlayMode::ExtraConfirm {
+                "\nThis process is root-owned or under a protected system path.\n"
+            } else {
+                ""
+            };
+            let text = format!(
+                "Send {} to process {} ({})?\nUser: {}\nExecutable: {}{}Enter/y confirm  Esc/n cancel",
+                state.pending_signal,
+                process.pid,
+                process.name,
+                process.user.as_deref().unwrap_or("—"),
+                process
+                    .exe_path
+                    .as_ref()
+                    .map_or("—".to_owned(), |path| path.display().to_string()),
+                warning,
+            );
+            frame.render_widget(Clear, popup);
+            frame.render_widget(
+                Paragraph::new(text)
+                    .style(Style::default().fg(palette.accent()))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Confirm Signal"),
+                    ),
+                popup,
+            );
+        }
+        OverlayMode::SignalPicker => {
+            let lines = [
+                "Select a signal:",
+                "1  SIGTERM",
+                "2  SIGKILL",
+                "3  SIGINT",
+                "4  SIGHUP",
+                "5  SIGSTOP",
+                "6  SIGCONT",
+                "Esc cancels",
+            ]
+            .iter()
+            .copied()
+            .map(Line::from)
+            .collect::<Vec<_>>();
+            frame.render_widget(Clear, popup);
+            frame.render_widget(
+                Paragraph::new(lines).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Signal Picker"),
+                ),
+                popup,
+            );
+        }
     }
 }
 
@@ -560,13 +732,19 @@ mod tests {
             thread_count: Some(420),
             processes: vec![ProcessInfo {
                 pid: 123,
+                parent: Some(1),
                 name: "sample-process".to_owned(),
                 command: "/usr/bin/sample-process --option value".to_owned(),
                 exe_path: Some(PathBuf::from("/usr/bin/sample-process")),
                 user: Some("user".to_owned()),
+                uid: Some(501),
                 cpu_percent: Some(4.5),
                 mem_bytes: Some(128 * 1024 * 1024),
+                virtual_mem_bytes: Some(256 * 1024 * 1024),
                 status: "Sleep".to_owned(),
+                start_time: 100,
+                thread_count: Some(8),
+                is_system: false,
             }],
             ..Snapshot::default()
         }

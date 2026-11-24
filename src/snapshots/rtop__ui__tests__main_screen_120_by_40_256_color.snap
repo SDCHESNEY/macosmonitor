@@ -42,4 +42,4 @@ CACHED 1.0 GiB  SWAP 256.0 MiB/2.0 GiB  PRESSURE Normal
 │                                                                                                                      │
 │                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-p/n/u/c/m/t sort • / filter • Space pause • ↑/↓ navigate • q quit  PID 123 sample-process
+p/n/u/c/m/r sort • / filter • Enter detail • k kill • s signal • t tree • Space pause • q quit  PID 123 sample-process

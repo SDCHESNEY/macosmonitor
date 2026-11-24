@@ -3,8 +3,8 @@
 `rtop` is a terminal system monitor in the spirit of `top`, `htop`, and Activity
 Monitor. It is designed for macOS, with a portable Linux implementation.
 
-> **Status:** Phase 2 is implemented: a macOS-oriented overview with per-core
-> CPU, memory pressure and breakdown, bounded history, sorting and filtering.
+> **Status:** Phase 3 is implemented: process control, PID-safe signalling,
+> process details and a parent/child tree view.
 
 ## Platform support
 
@@ -30,6 +30,10 @@ user, CPU, memory, and status. Press the active sort key again to reverse the
 order. `/` filters by name or command; use `pid:`, `user:`, or `path:` for a
 specific field. `Enter` applies the filter and `Esc` clears it. Press `Space`
 to pause/resume updates, and `q`, `Esc`, or `Ctrl-C` to exit.
+Press `Enter` for the selected process detail view, `k` to request SIGTERM,
+and `s` to choose SIGTERM, SIGKILL, SIGINT, SIGHUP, SIGSTOP or SIGCONT. Signal
+requests require `Enter`/`y` confirmation (or `n`/`Esc` cancellation). Press
+`t` to switch between sorted and parent/child tree views.
 
 The event loop uses `std::thread` and `std::sync::mpsc`; an async runtime is not
 needed for this blocking workload. The first CPU reading is intentionally shown
@@ -50,6 +54,21 @@ as `—`. CPU and memory history retain at most 60 samples.
 On this Apple Silicon (`arm64`) host, `top -l 2` reported 0.8% CPU for the
 optimized monitor at a 1-second refresh in a short spot check. This is a
 single-session observation, not a benchmark.
+
+## Process control and macOS permissions
+
+Sending a signal always requires explicit confirmation. `k` requests SIGTERM;
+`s` opens the signal picker. rtop refuses PID 1 and its own PID, and verifies
+the process start time before signalling to reduce PID-reuse races. Root-owned
+processes and processes whose executable is under `/System`, `/usr`, or `/sbin`
+require a second warning confirmation. Processes owned by another user display
+a permission warning and are typically rejected with `EPERM` by macOS unless
+the terminal is running with suitable privileges.
+
+SIGTERM allows a graphical application or service to handle shutdown normally.
+SIGKILL is immediate and cannot be handled. Stopped processes may be resumed
+with SIGCONT. launchd-managed daemons can be restarted automatically after a
+signal, depending on their service configuration.
 
 ## License
 

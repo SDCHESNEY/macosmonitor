@@ -17,7 +17,8 @@ use crate::{
     app::{Action, AppState},
     cli::Args,
     collector::sysinfo_impl::SysinfoCollector,
-    event::{Event, WorkerSet, action_for_key},
+    event::{Event, WorkerSet, action_for_key_with_overlay},
+    process::signal::UnixProcessController,
 };
 
 fn main() -> Result<()> {
@@ -44,13 +45,21 @@ fn run(args: Args) -> Result<()> {
     let (sender, receiver) = mpsc::channel();
     let _workers = WorkerSet::start(sender, collector, Duration::from_millis(args.refresh_ms));
     let mut state = AppState::new();
+    let process_controller = UnixProcessController::new();
 
     while state.running {
         let event = receiver
             .recv()
             .context("event workers stopped unexpectedly")?;
         match event {
-            Event::Key(key) => state.update(action_for_key(key, state.filter_active)),
+            Event::Key(key) => {
+                let action = action_for_key_with_overlay(key, state.filter_active, state.overlay);
+                let confirm = matches!(action, Action::ConfirmKill);
+                state.update(action);
+                if confirm {
+                    state.confirm_kill(&process_controller);
+                }
+            }
             Event::Resize(width, height) => {
                 tracing::debug!(width, height, "terminal resized");
             }

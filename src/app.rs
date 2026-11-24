@@ -4,6 +4,7 @@ use crate::{
     collector::{ProcessInfo, Snapshot},
     process::{
         filter,
+        signal::{ProcessController, Signal},
         sort::{self, SortKey},
     },
 };
@@ -25,9 +26,27 @@ pub enum Action {
     FilterCommit,
     FilterCancel,
     TogglePause,
+    OpenDetail,
+    CloseOverlay,
+    RequestKill,
+    OpenSignalPicker,
+    SelectSignal(Signal),
+    ConfirmKill,
+    CancelKill,
+    ToggleTree,
     Quit,
     Noop,
     SnapshotReceived(Box<Snapshot>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OverlayMode {
+    #[default]
+    None,
+    Detail,
+    KillConfirm,
+    ExtraConfirm,
+    SignalPicker,
 }
 
 #[derive(Debug)]
@@ -44,6 +63,12 @@ pub struct AppState {
     pub cpu_history: VecDeque<u64>,
     pub memory_history: VecDeque<u64>,
     pub running: bool,
+    pub overlay: OverlayMode,
+    pub pending_signal: Signal,
+    pub selected_signal: Signal,
+    pub status_message: Option<String>,
+    pub tree_view: bool,
+    pub tree_depths: Vec<usize>,
 }
 
 impl AppState {
@@ -133,6 +158,37 @@ impl AppState {
                 self.restore_selection(self.selected_pid, self.selected_index);
             }
             Action::TogglePause => self.paused = !self.paused,
+            Action::OpenDetail => {
+                if self.selected_process().is_some() {
+                    self.overlay = OverlayMode::Detail;
+                }
+            }
+            Action::CloseOverlay => self.overlay = OverlayMode::None,
+            Action::RequestKill => self.request_kill(Signal::Term),
+            Action::OpenSignalPicker => {
+                if self.selected_process().is_some() {
+                    self.selected_signal = self.pending_signal;
+                    self.overlay = OverlayMode::SignalPicker;
+                }
+            }
+            Action::SelectSignal(signal) => {
+                self.selected_signal = signal;
+                self.pending_signal = signal;
+                self.overlay = if self.kill_requires_extra_confirmation() {
+                    OverlayMode::ExtraConfirm
+                } else {
+                    OverlayMode::KillConfirm
+                };
+            }
+            Action::ConfirmKill => {}
+            Action::CancelKill => {
+                self.cancel_kill();
+            }
+            Action::ToggleTree => {
+                self.tree_view = !self.tree_view;
+                self.rebuild_visible_indices();
+                self.restore_selection(self.selected_pid, self.selected_index);
+            }
         }
         self.selected_pid = self
             .visible_indices
@@ -160,12 +216,25 @@ impl AppState {
     fn rebuild_visible_indices(&mut self) {
         let Some(snapshot) = &self.snapshot else {
             self.visible_indices.clear();
+            self.tree_depths.clear();
             return;
         };
         let mut indices =
             sort::sorted_indices(&snapshot.processes, self.sort_key, self.sort_descending);
         indices.retain(|index| filter::matches(&snapshot.processes[*index], &self.filter_query));
-        self.visible_indices = indices;
+        if self.tree_view {
+            let (tree_indices, depths) = build_tree_indices(
+                &snapshot.processes,
+                &indices,
+                self.sort_key,
+                self.sort_descending,
+            );
+            self.visible_indices = tree_indices;
+            self.tree_depths = depths;
+        } else {
+            self.visible_indices = indices;
+            self.tree_depths = vec![0; self.visible_indices.len()];
+        }
     }
 
     fn restore_selection(&mut self, selected_pid: Option<u32>, old_index: usize) {
@@ -184,6 +253,162 @@ impl AppState {
             .and_then(|index| self.snapshot.as_ref()?.processes.get(*index))
             .map(|process| process.pid);
     }
+
+    pub fn request_kill(&mut self, signal: Signal) {
+        if self.selected_process().is_none() {
+            return;
+        }
+        self.pending_signal = signal;
+        self.selected_signal = signal;
+        self.overlay = if self.kill_requires_extra_confirmation() {
+            OverlayMode::ExtraConfirm
+        } else {
+            OverlayMode::KillConfirm
+        };
+        self.status_message = None;
+    }
+
+    pub fn kill_requires_extra_confirmation(&self) -> bool {
+        self.selected_process()
+            .is_some_and(|process| process.is_system || process.uid == Some(0))
+    }
+
+    pub fn confirm_kill(&mut self, controller: &dyn ProcessController) {
+        let Some(process) = self.selected_process().cloned() else {
+            self.overlay = OverlayMode::None;
+            self.status_message = Some("No process selected".to_owned());
+            return;
+        };
+        if process.pid == 1 {
+            self.status_message = Some("Cannot signal PID 1 (launchd)".to_owned());
+            self.overlay = OverlayMode::None;
+            return;
+        }
+        if process.pid == std::process::id() {
+            self.status_message = Some("Cannot signal the rtop monitor process".to_owned());
+            self.overlay = OverlayMode::None;
+            return;
+        }
+        match controller.send(process.pid, process.start_time, self.pending_signal) {
+            Ok(()) => {
+                self.status_message = Some(format!(
+                    "Sent {} to {} ({})",
+                    self.pending_signal, process.pid, process.name
+                ));
+                self.overlay = OverlayMode::None;
+            }
+            Err(error) => {
+                self.status_message = Some(error.status_message());
+                self.overlay = OverlayMode::None;
+            }
+        }
+    }
+
+    pub fn cancel_kill(&mut self) {
+        self.overlay = OverlayMode::None;
+        self.status_message = Some("Signal cancelled".to_owned());
+    }
+}
+
+fn build_tree_indices(
+    processes: &[ProcessInfo],
+    filtered_indices: &[usize],
+    sort_key: SortKey,
+    descending: bool,
+) -> (Vec<usize>, Vec<usize>) {
+    use std::collections::{HashMap, HashSet};
+
+    let included: HashSet<u32> = filtered_indices
+        .iter()
+        .filter_map(|index| processes.get(*index).map(|process| process.pid))
+        .collect();
+    let mut by_parent: HashMap<u32, Vec<usize>> = HashMap::new();
+    for &index in filtered_indices {
+        let Some(process) = processes.get(index) else {
+            continue;
+        };
+        let parent = process
+            .parent
+            .filter(|parent| included.contains(parent))
+            .unwrap_or(1);
+        by_parent.entry(parent).or_default().push(index);
+    }
+
+    for children in by_parent.values_mut() {
+        let snapshot_subset = children
+            .iter()
+            .map(|index| processes[*index].clone())
+            .collect::<Vec<_>>();
+        let order = sort::sorted_indices(&snapshot_subset, sort_key, descending);
+        let original = children.clone();
+        let sorted = order
+            .into_iter()
+            .map(|item| original[item])
+            .collect::<Vec<_>>();
+        children.copy_from_slice(&sorted);
+    }
+
+    fn visit(
+        pid: u32,
+        depth: usize,
+        processes: &[ProcessInfo],
+        by_parent: &HashMap<u32, Vec<usize>>,
+        visited: &mut HashSet<u32>,
+        out: &mut Vec<usize>,
+        depths: &mut Vec<usize>,
+    ) {
+        if !visited.insert(pid) {
+            return;
+        }
+        if let Some(index) = processes.iter().position(|process| process.pid == pid) {
+            out.push(index);
+            depths.push(depth);
+        }
+        if let Some(children) = by_parent.get(&pid) {
+            for &child in children {
+                if let Some(process) = processes.get(child) {
+                    visit(
+                        process.pid,
+                        depth + 1,
+                        processes,
+                        by_parent,
+                        visited,
+                        out,
+                        depths,
+                    );
+                }
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut depths = Vec::new();
+    let mut visited = HashSet::new();
+    visit(
+        1,
+        0,
+        processes,
+        &by_parent,
+        &mut visited,
+        &mut out,
+        &mut depths,
+    );
+    for &index in filtered_indices {
+        if let Some(process) = processes.get(index)
+            && !visited.contains(&process.pid)
+        {
+            visit(
+                process.pid,
+                0,
+                processes,
+                &by_parent,
+                &mut visited,
+                &mut out,
+                &mut depths,
+            );
+        }
+    }
+    (out, depths)
 }
 
 fn push_history(history: &mut VecDeque<u64>, value: u64) {
@@ -208,6 +433,12 @@ impl Default for AppState {
             cpu_history: VecDeque::with_capacity(HISTORY_CAPACITY),
             memory_history: VecDeque::with_capacity(HISTORY_CAPACITY),
             running: true,
+            overlay: OverlayMode::None,
+            pending_signal: Signal::Term,
+            selected_signal: Signal::Term,
+            status_message: None,
+            tree_view: false,
+            tree_depths: Vec::new(),
         }
     }
 }
@@ -216,7 +447,10 @@ impl Default for AppState {
 mod tests {
     use crate::{
         collector::{ProcessInfo, Snapshot, SystemCollector},
-        process::sort::SortKey,
+        process::{
+            signal::{KillError, ProcessController, Signal},
+            sort::SortKey,
+        },
     };
 
     use super::{Action, AppState, HISTORY_CAPACITY};
@@ -234,13 +468,19 @@ mod tests {
             processes: (1..=process_count)
                 .map(|pid| ProcessInfo {
                     pid,
+                    parent: None,
                     name: format!("process-{pid}"),
                     command: String::new(),
                     exe_path: None,
                     user: Some("user".to_owned()),
+                    uid: Some(1000),
                     cpu_percent: None,
                     mem_bytes: Some(0),
+                    virtual_mem_bytes: None,
                     status: "Sleep".to_owned(),
+                    start_time: pid as u64,
+                    thread_count: None,
+                    is_system: false,
                 })
                 .collect(),
             ..Snapshot::default()
@@ -371,5 +611,81 @@ mod tests {
         assert_eq!(state.cpu_history.len(), HISTORY_CAPACITY);
         assert_eq!(state.memory_history.len(), HISTORY_CAPACITY);
         assert_eq!(state.cpu_history.front(), Some(&5));
+    }
+
+    struct MockProcessController {
+        calls: std::sync::Mutex<Vec<(u32, u64, Signal)>>,
+        result: Result<(), KillError>,
+    }
+
+    impl ProcessController for MockProcessController {
+        fn send(&self, pid: u32, expected_start: u64, signal: Signal) -> Result<(), KillError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((pid, expected_start, signal));
+            self.result
+        }
+    }
+
+    #[test]
+    fn kill_request_confirm_and_cancel_state_transitions() {
+        let mut state = AppState::new();
+        state.update(Action::SnapshotReceived(Box::new(fake_snapshot(2))));
+        state.update(Action::MoveDown);
+
+        state.update(Action::RequestKill);
+        assert_eq!(state.overlay, super::OverlayMode::KillConfirm);
+        state.update(Action::CancelKill);
+        assert_eq!(state.overlay, super::OverlayMode::None);
+        assert_eq!(state.status_message.as_deref(), Some("Signal cancelled"));
+
+        state.request_kill(Signal::Kill);
+        let controller = MockProcessController {
+            calls: std::sync::Mutex::new(Vec::new()),
+            result: Ok(()),
+        };
+        state.confirm_kill(&controller);
+        assert_eq!(state.overlay, super::OverlayMode::None);
+        assert_eq!(
+            *controller.calls.lock().unwrap(),
+            vec![(2, 2, Signal::Kill)]
+        );
+    }
+
+    #[test]
+    fn system_and_root_owned_processes_require_extra_confirmation() {
+        let mut snapshot = fake_snapshot(1);
+        snapshot.processes[0].is_system = true;
+        snapshot.processes[0].uid = Some(0);
+        let mut state = AppState::new();
+        state.update(Action::SnapshotReceived(Box::new(snapshot)));
+
+        state.request_kill(Signal::Term);
+        assert_eq!(state.overlay, super::OverlayMode::ExtraConfirm);
+    }
+
+    #[test]
+    fn tree_view_nests_children_under_parents() {
+        let mut snapshot = fake_snapshot(3);
+        snapshot.processes[0].pid = 1;
+        snapshot.processes[0].name = "launchd".to_owned();
+        snapshot.processes[1].pid = 2;
+        snapshot.processes[1].parent = Some(1);
+        snapshot.processes[2].pid = 3;
+        snapshot.processes[2].parent = Some(2);
+        let mut state = AppState::new();
+        state.update(Action::SnapshotReceived(Box::new(snapshot)));
+
+        state.update(Action::ToggleTree);
+        assert_eq!(
+            state
+                .visible_indices
+                .iter()
+                .map(|&index| state.snapshot.as_ref().unwrap().processes[index].pid)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(state.tree_depths, vec![0, 1, 2]);
     }
 }

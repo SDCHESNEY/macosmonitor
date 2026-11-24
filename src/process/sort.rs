@@ -102,13 +102,19 @@ mod tests {
     fn process(pid: u32, name: &str, cpu: f32, memory: u64) -> ProcessInfo {
         ProcessInfo {
             pid,
+            parent: Some(1),
             name: name.to_owned(),
             command: String::new(),
             exe_path: None,
             user: Some(format!("user-{pid}")),
+            uid: Some(1000),
             cpu_percent: Some(cpu),
             mem_bytes: Some(memory),
+            virtual_mem_bytes: Some(memory * 2),
             status: if pid == 2 { "Run" } else { "Sleep" }.to_owned(),
+            start_time: pid as u64,
+            thread_count: Some(1),
+            is_system: false,
         }
     }
 
