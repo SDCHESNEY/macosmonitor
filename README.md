@@ -3,27 +3,11 @@
 `rtop` is a terminal system monitor in the spirit of `top`, `htop`, and Activity
 Monitor. It is designed for macOS, with a portable Linux implementation.
 
-> **Status:** Phase 4 is implemented: native Darwin collection support,
-> configuration, themes, mouse input, help, disk usage and release tooling.
-
 ## Platform support
 
 macOS is the primary target, with Apple Silicon first and Intel macOS also
 supported. Linux is a secondary target and is checked in CI. Windows is not
 targeted.
-
-## Phase 4 features
-
-- macOS defaults to the native collector. Use `--collector sysinfo` to force the
-  cross-platform collector, or `--collector native` to request Darwin/libproc
-  collection explicitly.
-- Disk availability and total capacity are shown in the overview when exposed
-  by `sysinfo`.
-- Mouse selection and scrolling are enabled, and clicking the process-table
-  header selects the corresponding sort key.
-- Press `?` for the in-app key-binding help.
-- `NO_COLOR=1` disables terminal colours. Dark is the default; use
-  `--theme light` or `theme = "light"` in config.
 
 ## Usage
 
@@ -33,7 +17,8 @@ Launch the interactive terminal monitor:
 
 ```sh
 cargo run --release
-# or, after building:
+# or build and run the release binary:
+cargo build --release
 ./target/release/rtop
 ```
 
@@ -62,15 +47,21 @@ SIGCONT.
 
 ### CLI
 
-Pass options before launching the TUI:
+Run from the repository root. When using Cargo, put `--` before rtop options
+so they are passed to the application:
 
 ```sh
-rtop --refresh-ms 500
-rtop --collector native
-rtop --collector sysinfo
-rtop --theme light
-NO_COLOR=1 rtop
+cargo run --release -- --refresh-ms 500
+cargo run --release -- --collector native
+cargo run --release -- --collector sysinfo
+cargo run --release -- --theme light
+NO_COLOR=1 cargo run --release
 ```
+
+If `--collector` is reported as an unexpected argument, rebuild with
+`cargo build --release` and run `./target/release/rtop --help` to verify the
+available options. A bare `rtop` command may resolve to an older installation
+on your `PATH`; use `which -a rtop` to see the matching executables.
 
 Available options:
 
